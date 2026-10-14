@@ -1,0 +1,279 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>부서 랜덤 선발기</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Black+Han+Sans&family=Noto+Sans+KR:wght@400;500;700&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --paper:#F7F5EE; --ink:#1B2140; --cobalt:#1F3FD1; --cobalt-deep:#172E9C;
+    --sun:#FFC933; --line:#D9D6CC; --muted:#6B7085; --win:#FFF3C4;
+    color-scheme: light;
+  }
+  @media (prefers-color-scheme: dark){
+    :root{ --paper:#14172A; --ink:#F3F2EA; --cobalt:#5A78FF; --cobalt-deep:#8AA0FF;
+      --sun:#FFC933; --line:#2A2F4A; --muted:#9AA0BA; --win:#3A3414; color-scheme: dark; }
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;background:var(--paper);color:var(--ink);
+    font-family:"Noto Sans KR","Apple SD Gothic Neo","Malgun Gothic",sans-serif;line-height:1.5}
+  body{min-height:100vh;display:grid;grid-template-rows:auto 1fr auto}
+  header{padding:28px 32px 8px;display:flex;align-items:baseline;justify-content:space-between;gap:16px;flex-wrap:wrap}
+  h1{margin:0;font-family:"Black Han Sans","Noto Sans KR",sans-serif;font-weight:400;
+    font-size:clamp(28px,5vw,56px);letter-spacing:-.01em;line-height:1.05}
+  .status{font-size:15px;color:var(--muted)}
+  .status b{color:var(--ink);font-weight:500}
+  main{padding:16px 32px 32px;display:grid;gap:24px;grid-template-columns:1fr;align-content:start}
+  main.host{grid-template-columns:minmax(0,1fr) 340px}
+  @media (max-width:860px){ main.host{grid-template-columns:1fr} }
+
+  /* 슬롯 보드 */
+  .board{display:grid;gap:16px;grid-template-columns:repeat(auto-fit,minmax(170px,1fr))}
+  .slot{position:relative;height:150px;border:3px solid var(--ink);border-radius:14px;background:var(--paper);
+    overflow:hidden;display:flex;align-items:center;justify-content:center}
+  .slot::before,.slot::after{content:"";position:absolute;left:0;right:0;height:38px;pointer-events:none;z-index:2}
+  .slot::before{top:0;background:linear-gradient(var(--paper),transparent)}
+  .slot::after{bottom:0;background:linear-gradient(transparent,var(--paper))}
+  .slot .num{position:absolute;top:8px;left:12px;font-size:13px;color:var(--muted);z-index:3}
+  .slot .name{font-family:"Black Han Sans","Noto Sans KR",sans-serif;font-weight:400;
+    font-size:clamp(26px,3.2vw,40px);letter-spacing:.02em;text-align:center;padding:0 10px;
+    overflow-wrap:anywhere;transition:transform .08s}
+  .slot.spinning .name{color:var(--muted);filter:blur(.6px)}
+  .slot.stopped{background:var(--win);border-color:var(--cobalt)}
+  .slot.stopped .name{color:var(--cobalt-deep);animation:pop .45s cubic-bezier(.2,1.6,.4,1)}
+  .slot.idle .name{color:var(--line)}
+  @keyframes pop{0%{transform:scale(.6)}100%{transform:scale(1)}}
+  @media (prefers-reduced-motion:reduce){ .slot.stopped .name{animation:none} }
+
+  .empty{border:2px dashed var(--line);border-radius:14px;padding:48px 24px;text-align:center;color:var(--muted)}
+  .winners{margin-top:8px;font-size:18px}
+  .winners span{display:inline-block;background:var(--sun);color:#1B2140;padding:4px 12px;border-radius:999px;margin:4px 6px 4px 0;font-weight:700}
+
+  /* 운영자 패널 */
+  aside{border-left:3px solid var(--ink);padding-left:24px;display:flex;flex-direction:column;gap:18px}
+  aside[hidden]{display:none}
+  @media (max-width:860px){ aside{border-left:0;border-top:3px solid var(--ink);padding:24px 0 0} }
+  label{display:block;font-size:14px;color:var(--muted);margin-bottom:6px}
+  input[type=text],input[type=number],textarea{width:100%;font:inherit;padding:10px 12px;border:2px solid var(--line);
+    border-radius:8px;background:var(--paper);color:var(--ink)}
+  textarea{min-height:200px;resize:vertical}
+  input:focus,textarea:focus,button:focus-visible{outline:3px solid var(--sun);outline-offset:2px}
+  .row{display:flex;gap:10px;align-items:center}
+  .row input[type=number]{width:90px}
+  .check{display:flex;gap:8px;align-items:center;font-size:14px;color:var(--ink)}
+  button{font:inherit;font-weight:700;padding:12px 16px;border-radius:10px;border:2px solid var(--ink);
+    background:var(--paper);color:var(--ink);cursor:pointer}
+  button.primary{background:var(--cobalt);border-color:var(--cobalt);color:#fff;font-size:17px}
+  button.primary:hover{background:var(--cobalt-deep)}
+  button:disabled{opacity:.45;cursor:not-allowed}
+  .hint{font-size:13px;color:var(--muted)}
+  .err{background:#FDE2E2;color:#7A1C1C;padding:12px 14px;border-radius:8px;font-size:14px}
+  footer{padding:12px 32px 20px;font-size:13px;color:var(--muted);display:flex;justify-content:space-between;flex-wrap:wrap;gap:8px}
+  footer a{color:var(--cobalt)}
+</style>
+</head>
+<body>
+<header>
+  <h1 id="title">부서 랜덤 선발기</h1>
+  <div class="status" id="status">연결 중…</div>
+</header>
+
+<main id="main">
+  <section>
+    <div id="board" class="board"></div>
+    <div id="winners" class="winners"></div>
+  </section>
+  <aside id="panel" hidden>
+    <div>
+      <label for="evTitle">행사 제목</label>
+      <input type="text" id="evTitle" placeholder="예: 10월 워크숍 조 추첨">
+    </div>
+    <div>
+      <label for="names">부서원 이름 (한 줄에 한 명, 쉼표도 가능)</label>
+      <textarea id="names" placeholder="홍길동&#10;김철수&#10;이영희"></textarea>
+      <div class="hint" id="nameCount"></div>
+    </div>
+    <div class="row">
+      <div>
+        <label for="count">뽑을 인원</label>
+        <input type="number" id="count" min="1" value="6">
+      </div>
+      <label class="check" style="margin-top:22px"><input type="checkbox" id="excludePrev"> 이전 당첨자 제외</label>
+    </div>
+    <button id="saveBtn">명단 저장 (뷰어에 반영)</button>
+    <button id="spinBtn" class="primary">뽑기 시작</button>
+    <button id="resetBtn">결과 지우기</button>
+    <button id="clearHistBtn">당첨 기록 초기화</button>
+    <div class="hint" id="hist"></div>
+    <div class="err" id="err" hidden></div>
+  </aside>
+</main>
+
+<footer>
+  <span id="viewerLink"></span>
+  <span id="modeTag"></span>
+</footer>
+
+<script type="module">
+import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
+import { getDatabase, ref, onValue, set, update, serverTimestamp }
+  from "https://www.gstatic.com/firebasejs/10.12.0/firebase-database.js";
+
+// ===== 1) Firebase 설정 =====
+const firebaseConfig = {
+  apiKey: "AIzaSyC5qbRJCVJccI0f3ThVJHbyst-VFoQWcEg",
+  authDomain: "new-media-group-3bba9.firebaseapp.com",
+  databaseURL: "https://new-media-group-3bba9-default-rtdb.asia-southeast1.firebasedatabase.app",
+  projectId: "new-media-group-3bba9",
+  storageBucket: "new-media-group-3bba9.firebasestorage.app",
+  messagingSenderId: "348523168069",
+  appId: "1:348523168069:web:f7ce7587698d19a573fe2c"
+};
+
+// ===== 2) 연출 타이밍 =====
+const SPIN_BASE_MS = 2600;   // 첫 칸이 멈출 때까지
+const SPIN_GAP_MS  = 900;    // 다음 칸이 멈추는 간격
+const TICK_MS      = 70;     // 이름 바뀌는 속도
+
+const isHost = location.hash === "#host";
+const $ = id => document.getElementById(id);
+const board=$("board"), statusEl=$("status"), winnersEl=$("winners"), errEl=$("err");
+
+$("modeTag").textContent = isHost ? "운영자 모드" : "뷰어 모드";
+$("viewerLink").textContent = isHost ? "뷰어 링크: " + location.href.replace(/#.*$/,"") : "";
+if (isHost){ $("panel").hidden=false; $("main").classList.add("host"); }
+
+let app, db, roomRef, serverOffset=0, state=null, rafId=null;
+try{
+  if (firebaseConfig.databaseURL.includes("HERE")) throw new Error("databaseURL이 아직 입력되지 않았습니다.");
+  app = initializeApp(firebaseConfig);
+  db = getDatabase(app);
+  roomRef = ref(db, "picker");
+  onValue(ref(db, ".info/serverTimeOffset"), s => serverOffset = s.val() || 0);
+  onValue(roomRef, s => { state = s.val() || {}; render(); }, e => showErr("DB 읽기 실패: " + e.message));
+}catch(e){ showErr(e.message); statusEl.textContent="연결 실패"; }
+
+function showErr(m){ errEl.hidden=false; errEl.textContent=m; statusEl.textContent="오류"; console.error(m); }
+const now = () => Date.now() + serverOffset;
+const parseNames = t => [...new Set(t.split(/[\n,]/).map(s=>s.trim()).filter(Boolean))];
+
+// ===== 렌더링 =====
+function render(){
+  const names = state.names || [], count = state.count || 0, status = state.status || "idle";
+  $("title").textContent = state.title || "부서 랜덤 선발기";
+  document.title = $("title").textContent;
+
+  if (isHost){
+    if (document.activeElement !== $("names")) $("names").value = names.join("\n");
+    if (document.activeElement !== $("evTitle")) $("evTitle").value = state.title || "";
+    if (document.activeElement !== $("count")) $("count").value = count || 6;
+    $("nameCount").textContent = `${parseNames($("names").value).length}명 입력됨`;
+    const hist = state.history || [];
+    $("hist").textContent = hist.length ? `이전 당첨 기록 (${hist.length}명): ${hist.join(", ")}` : "이전 당첨 기록 없음";
+    $("spinBtn").disabled = status === "spinning";
+  }
+
+  if (!names.length){
+    board.innerHTML = `<div class="empty">아직 명단이 없습니다.${isHost?" 오른쪽에서 이름을 입력하고 저장하세요.":" 운영자가 명단을 올리면 여기에 표시됩니다."}</div>`;
+    winnersEl.innerHTML=""; statusEl.innerHTML=""; stopLoop(); return;
+  }
+
+  // 슬롯 칸 생성(개수 변경 시에만 재생성)
+  if (board.children.length !== count || !board.querySelector(".slot")){
+    board.innerHTML = "";
+    for (let i=0;i<count;i++){
+      board.insertAdjacentHTML("beforeend",
+        `<div class="slot idle" data-i="${i}"><span class="num">${i+1}</span><div class="name">?</div></div>`);
+    }
+  }
+
+  if (status === "spinning" && state.winners && state.startAt){
+    statusEl.innerHTML = `<b>${names.length}명</b> 중 <b>${count}명</b> 뽑는 중…`;
+    winnersEl.innerHTML = "";
+    startLoop();
+  } else if (status === "done" && state.winners){
+    stopLoop();
+    [...board.children].forEach((el,i)=>{ el.className="slot stopped"; el.querySelector(".name").textContent=state.winners[i] ?? ""; });
+    statusEl.innerHTML = `<b>${names.length}명</b> 중 <b>${count}명</b> 선발 완료`;
+    winnersEl.innerHTML = state.winners.map(w=>`<span>${esc(w)}</span>`).join("");
+  } else {
+    stopLoop();
+    [...board.children].forEach(el=>{ el.className="slot idle"; el.querySelector(".name").textContent="?"; });
+    statusEl.innerHTML = `<b>${names.length}명</b> 중 <b>${count}명</b>을 뽑습니다. 시작을 기다리는 중`;
+    winnersEl.innerHTML = "";
+  }
+}
+const esc = s => String(s).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+
+// ===== 슬롯 애니메이션 (모든 접속자가 startAt 기준으로 동일하게 재생) =====
+let lastTick=0;
+function startLoop(){ if (rafId) return; lastTick=0; rafId=requestAnimationFrame(loop); }
+function stopLoop(){ if (rafId){ cancelAnimationFrame(rafId); rafId=null; } }
+function loop(){
+  const names=state.names, winners=state.winners, elapsed = now() - state.startAt;
+  let allStopped = true;
+  [...board.children].forEach((el,i)=>{
+    const stopAt = SPIN_BASE_MS + i*SPIN_GAP_MS;
+    const nameEl = el.querySelector(".name");
+    if (elapsed >= stopAt){
+      if (!el.classList.contains("stopped")){ el.className="slot stopped"; nameEl.textContent = winners[i]; }
+    } else {
+      allStopped = false;
+      el.className="slot spinning";
+      if (performance.now() - lastTick > TICK_MS) nameEl.textContent = names[Math.floor(Math.random()*names.length)];
+    }
+  });
+  if (performance.now() - lastTick > TICK_MS) lastTick = performance.now();
+  if (allStopped){
+    stopLoop();
+    winnersEl.innerHTML = winners.map(w=>`<span>${esc(w)}</span>`).join("");
+    statusEl.innerHTML = `<b>${names.length}명</b> 중 <b>${winners.length}명</b> 선발 완료`;
+    if (isHost) update(roomRef, { status:"done" });
+  } else rafId = requestAnimationFrame(loop);
+}
+
+// ===== 운영자 동작 =====
+if (isHost){
+  $("names").addEventListener("input", ()=> $("nameCount").textContent = `${parseNames($("names").value).length}명 입력됨`);
+
+  $("saveBtn").onclick = async ()=>{
+    const names = parseNames($("names").value);
+    const count = Math.max(1, parseInt($("count").value)||1);
+    if (!names.length) return showErr("이름을 한 명 이상 입력하세요.");
+    if (count > names.length) return showErr(`뽑을 인원(${count})이 명단(${names.length}명)보다 많습니다.`);
+    errEl.hidden = true;
+    await update(roomRef, { title: $("evTitle").value.trim(), names, count, status:"idle", winners:null, startAt:null });
+  };
+
+  $("spinBtn").onclick = async ()=>{
+    const names = parseNames($("names").value);
+    const count = Math.max(1, parseInt($("count").value)||1);
+    const hist = state.history || [];
+    let pool = $("excludePrev").checked ? names.filter(n=>!hist.includes(n)) : names;
+    if (!names.length) return showErr("이름을 먼저 입력하세요.");
+    if (count > pool.length) return showErr(`뽑을 수 있는 인원(${pool.length}명)이 ${count}명보다 적습니다.`);
+    errEl.hidden = true;
+    const winners = shuffle(pool).slice(0, count);
+    await update(roomRef, {
+      title: $("evTitle").value.trim(), names, count,
+      winners, startAt: serverTimestamp(), status:"spinning",
+      history: [...new Set([...hist, ...winners])]
+    });
+  };
+
+  $("resetBtn").onclick = ()=> update(roomRef, { status:"idle", winners:null, startAt:null });
+  $("clearHistBtn").onclick = ()=>{ if (confirm("이전 당첨 기록을 모두 지울까요?")) update(roomRef, { history:null }); };
+}
+
+// 암호학적 난수 기반 셔플 (Fisher–Yates)
+function shuffle(arr){
+  const a=[...arr], r=new Uint32Array(a.length);
+  crypto.getRandomValues(r);
+  for (let i=a.length-1;i>0;i--){ const j=r[i]%(i+1); [a[i],a[j]]=[a[j],a[i]]; }
+  return a;
+}
+</script>
+</body>
+</html>
